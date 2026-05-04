@@ -38,7 +38,7 @@ if [[ -z "$API_ID" || "$API_ID" == "None" ]]; then
   API_ID="$(aws apigatewayv2 create-api \
     --name "$API_NAME" \
     --protocol-type HTTP \
-    --cors-configuration "AllowOrigins=[$ALLOWED_ORIGIN],AllowHeaders=[content-type,x-api-key],AllowMethods=[GET,OPTIONS]" \
+    --cors-configuration "AllowOrigins=[$ALLOWED_ORIGIN],AllowHeaders=[content-type,x-api-key],AllowMethods=[GET,POST,OPTIONS]" \
     --region "$AWS_REGION" \
     --query 'ApiId' \
     --output text)"
@@ -47,7 +47,7 @@ else
   echo "✔ API exists: $API_ID"
   aws apigatewayv2 update-api \
     --api-id "$API_ID" \
-    --cors-configuration "AllowOrigins=[$ALLOWED_ORIGIN],AllowHeaders=[content-type,x-api-key],AllowMethods=[GET,OPTIONS]" \
+    --cors-configuration "AllowOrigins=[$ALLOWED_ORIGIN],AllowHeaders=[content-type,x-api-key],AllowMethods=[GET,POST,OPTIONS]" \
     --region "$AWS_REGION" >/dev/null
 fi
 
@@ -75,7 +75,10 @@ fi
 declare -a ROUTES=(
   "GET /health"
   "GET /screener/quotes"
+  "POST /backtest"
   "GET /picks/today"
+  "GET /picks/today/metadata"
+  "GET /picks/detail"
   "GET /picks/{scan_date}/returns"
   "GET /market/quote/{symbol}"
   "GET /market/ohlcv/{symbol}"

@@ -14,6 +14,7 @@ export AWS_PAGER=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 SERVING_DIR="$REPO_ROOT/cloud/serving_layer/lambda_functions/serving_api"
+SHARED_DIR="$REPO_ROOT/cloud/shared"
 COMMON_DIR="$REPO_ROOT/cloud/batch_layer/infrastructure/common"
 
 # shellcheck source=/dev/null
@@ -85,9 +86,11 @@ fi
 
 rm -rf "$PACKAGE_DIR"
 mkdir -p "$PACKAGE_DIR/serving_api"
+mkdir -p "$PACKAGE_DIR/shared"
 
 pip_for_lambda_x86_64 "$SERVING_DIR/requirements.txt" "$PACKAGE_DIR"
 cp -R "$SERVING_DIR/"* "$PACKAGE_DIR/serving_api/"
+cp -R "$SHARED_DIR/"* "$PACKAGE_DIR/shared/"
 
 find "$PACKAGE_DIR" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 find "$PACKAGE_DIR" -name "*.pyc" -delete

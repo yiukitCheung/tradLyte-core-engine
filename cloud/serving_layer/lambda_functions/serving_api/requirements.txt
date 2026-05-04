@@ -4,3 +4,5 @@ pydantic
 psycopg2-binary
 cachetools
 boto3
+polars>=1.29.0,<2
+numpy>=2.0,<3

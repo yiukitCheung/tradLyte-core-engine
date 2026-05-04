@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from serving_api.cache import PICKS_CACHE, RETURNS_CACHE, make_cache_key
 from serving_api.db import execute_query
@@ -18,6 +18,32 @@ def _to_return(pick_price: Optional[Decimal], close_price: Optional[Decimal]) ->
     if float(pick_price) == 0.0:
         return None
     return float((close_price - pick_price) / pick_price)
+
+
+def _picks_today_meta_filters(
+    industry: Optional[str],
+    min_market_cap: Optional[int],
+    max_market_cap: Optional[int],
+) -> Dict[str, Any]:
+    """Params + WHERE clause fragment for optional symbol_metadata filters (matches screener semantics)."""
+    ind = industry.strip() if industry else None
+    if ind == "":
+        ind = None
+    return {
+        "industry": ind,
+        "min_mc": min_market_cap,
+        "max_mc": max_market_cap,
+    }
+
+
+_PICKS_TODAY_JOIN_WHERE = """
+        FROM stock_picks sp
+        LEFT JOIN symbol_metadata m ON m.symbol = sp.symbol
+        WHERE sp.scan_date = (SELECT d FROM latest)
+          AND (%(industry)s::text IS NULL OR m.industry = %(industry)s)
+          AND (%(min_mc)s::bigint IS NULL OR m.marketcap >= %(min_mc)s)
+          AND (%(max_mc)s::bigint IS NULL OR m.marketcap <= %(max_mc)s)
+"""
 
 
 def _parse_horizons(raw_horizons: str) -> List[int]:
@@ -39,29 +65,38 @@ def _parse_horizons(raw_horizons: str) -> List[int]:
 
 
 @router.get("/today")
-def get_picks_today(limit: int = Query(default=25, ge=1, le=200)) -> Dict[str, Any]:
-    cache_key = make_cache_key("picks_today", {"limit": limit})
+def get_picks_today(
+    limit: int = Query(default=25, ge=1, le=200),
+    industry: Optional[str] = Query(default=None, description="Exact match on symbol_metadata.industry"),
+    min_market_cap: Optional[int] = Query(default=None, ge=0, description="Minimum marketcap (symbol_metadata)"),
+    max_market_cap: Optional[int] = Query(default=None, ge=0, description="Maximum marketcap (symbol_metadata)"),
+) -> Dict[str, Any]:
+    filt = _picks_today_meta_filters(industry, min_market_cap, max_market_cap)
+    cache_key = make_cache_key(
+        "picks_today",
+        {"limit": limit, **filt},
+    )
     cached = PICKS_CACHE.get(cache_key)
     if cached is not None:
         cached["meta"]["cache_hit"] = True
         return cached
 
-    query = """
+    params = {"limit": limit, **filt}
+    query = f"""
         WITH latest AS (SELECT MAX(scan_date) AS d FROM stock_picks)
-        SELECT scan_date,
-               rank,
-               symbol,
-               strategy_name,
-               signal,
-               price,
-               confidence,
-               metadata
-        FROM stock_picks
-        WHERE scan_date = (SELECT d FROM latest)
-        ORDER BY rank ASC
+        SELECT sp.scan_date,
+               sp.rank,
+               sp.symbol,
+               sp.strategy_name,
+               sp.signal,
+               sp.price,
+               sp.confidence,
+               sp.metadata
+        {_PICKS_TODAY_JOIN_WHERE}
+        ORDER BY sp.rank ASC
         LIMIT %(limit)s;
     """
-    rows = execute_query(query, params={"limit": limit})
+    rows = execute_query(query, params=params)
     scan_date = rows[0]["scan_date"] if rows else None
     response = {
         "data": rows,
@@ -69,6 +104,142 @@ def get_picks_today(limit: int = Query(default=25, ge=1, le=200)) -> Dict[str, A
             "count": len(rows),
             "limit": limit,
             "scan_date": scan_date,
+            "filters": {
+                "industry": filt["industry"],
+                "min_market_cap": filt["min_mc"],
+                "max_market_cap": filt["max_mc"],
+            },
+            "cache_hit": False,
+        },
+    }
+    PICKS_CACHE[cache_key] = response
+    return response
+
+
+@router.get("/today/metadata")
+def get_picks_today_metadata(
+    limit: int = Query(default=25, ge=1, le=200),
+    industry: Optional[str] = Query(default=None, description="Exact match on symbol_metadata.industry"),
+    min_market_cap: Optional[int] = Query(default=None, ge=0, description="Minimum marketcap (symbol_metadata)"),
+    max_market_cap: Optional[int] = Query(default=None, ge=0, description="Maximum marketcap (symbol_metadata)"),
+) -> Dict[str, Any]:
+    filt = _picks_today_meta_filters(industry, min_market_cap, max_market_cap)
+    cache_key = make_cache_key(
+        "picks_today_metadata",
+        {"limit": limit, **filt},
+    )
+    cached = PICKS_CACHE.get(cache_key)
+    if cached is not None:
+        cached["meta"]["cache_hit"] = True
+        return cached
+
+    params = {"limit": limit, **filt}
+    query = f"""
+        WITH latest AS (SELECT MAX(scan_date) AS d FROM stock_picks)
+        SELECT sp.scan_date,
+               sp.rank,
+               sp.symbol,
+               sp.strategy_name,
+               sp.metadata
+        {_PICKS_TODAY_JOIN_WHERE}
+        ORDER BY sp.rank ASC
+        LIMIT %(limit)s;
+    """
+    rows = execute_query(query, params=params)
+    scan_date = rows[0]["scan_date"] if rows else None
+    response = {
+        "data": rows,
+        "meta": {
+            "count": len(rows),
+            "limit": limit,
+            "scan_date": scan_date,
+            "filters": {
+                "industry": filt["industry"],
+                "min_market_cap": filt["min_mc"],
+                "max_market_cap": filt["max_mc"],
+            },
+            "cache_hit": False,
+        },
+    }
+    PICKS_CACHE[cache_key] = response
+    return response
+
+
+@router.get("/detail")
+def get_pick_detail(
+    symbol: str = Query(..., min_length=1, max_length=50, description="Ticker, e.g. AAPL"),
+    scan_date: date = Query(..., description="Market scan date (YYYY-MM-DD)"),
+    strategy_name: Optional[str] = Query(
+        default=None,
+        max_length=255,
+        description="If set, return at most one row for this strategy",
+    ),
+) -> Dict[str, Any]:
+    """
+    Pick row(s) from `stock_picks` for a symbol + scan date, joined with
+    `symbol_metadata` for industry, market cap, and basic listing fields.
+    """
+    sym = symbol.strip().upper()
+    cache_key = make_cache_key(
+        "pick_detail",
+        {
+            "symbol": sym,
+            "scan_date": scan_date.isoformat(),
+            "strategy_name": strategy_name or "",
+        },
+    )
+    cached = PICKS_CACHE.get(cache_key)
+    if cached is not None:
+        cached["meta"]["cache_hit"] = True
+        return cached
+
+    params: Dict[str, Any] = {
+        "symbol": sym,
+        "scan_date": scan_date.isoformat(),
+    }
+    strategy_clause = ""
+    if strategy_name:
+        params["strategy_name"] = strategy_name.strip()
+        strategy_clause = "AND sp.strategy_name = %(strategy_name)s"
+
+    query = f"""
+        SELECT sp.scan_date,
+               sp.rank,
+               sp.symbol,
+               sp.strategy_name,
+               sp.signal,
+               sp.price,
+               sp.confidence,
+               sp.metadata AS pick_metadata,
+               m.name          AS asset_name,
+               m.market,
+               m.locale,
+               m.type          AS asset_type,
+               m.primary_exchange,
+               m.industry,
+               m.marketcap   AS market_cap
+        FROM stock_picks sp
+        LEFT JOIN symbol_metadata m ON m.symbol = sp.symbol
+        WHERE sp.scan_date = %(scan_date)s::date
+          AND UPPER(TRIM(sp.symbol)) = %(symbol)s
+          {strategy_clause}
+        ORDER BY sp.rank ASC, sp.strategy_name ASC;
+    """
+    rows = execute_query(query, params=params)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No stock_picks row for symbol={sym} scan_date={scan_date.isoformat()}"
+            + (f" strategy_name={strategy_name}" if strategy_name else ""),
+        )
+
+    response = {
+        "data": rows,
+        "meta": {
+            "count": len(rows),
+            "symbol": sym,
+            "scan_date": scan_date.isoformat(),
+            "strategy_filter": strategy_name,
             "cache_hit": False,
         },
     }

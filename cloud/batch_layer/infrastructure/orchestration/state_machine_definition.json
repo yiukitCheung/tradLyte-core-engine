@@ -1,7 +1,28 @@
 {
   "Comment": "Daily pipeline: parallel fetch → partition symbols → 10 parallel scanner workers → global aggregator → done",
-  "StartAt": "ParallelFetchers",
+  "StartAt": "ResolveScanDate",
   "States": {
+
+    "ResolveScanDate": {
+      "Type": "Choice",
+      "Comment": "Optional execution input: {\"scan_date\":\"YYYY-MM-DD\"}. Use when the run starts after midnight UTC but should target a prior trading day (partitioner only includes symbols with raw_ohlcv for that date). If omitted, scan_date defaults to the UTC calendar date of Execution.StartTime.",
+      "Choices": [
+        {
+          "Variable": "$.scan_date",
+          "IsPresent": true,
+          "Next": "ParallelFetchers"
+        }
+      ],
+      "Default": "SetDefaultScanDate"
+    },
+
+    "SetDefaultScanDate": {
+      "Type": "Pass",
+      "Parameters": {
+        "scan_date.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0)"
+      },
+      "Next": "ParallelFetchers"
+    },
 
     "ParallelFetchers": {
       "Type": "Parallel",
@@ -73,10 +94,11 @@
 
     "NormalizeAfterFetch": {
       "Type": "Pass",
-      "Comment": "Parse Lambda proxy bodies so Choice/Task steps can use ohlcv.* and meta.*.",
+      "Comment": "Parse Lambda proxy bodies so Choice/Task steps can use ohlcv.* and meta.*. Preserve scan_date for partitioner + Batch.",
       "Parameters": {
         "ohlcv.$": "States.StringToJson($.fetcherResults[0].ohlcvResult.Payload.body)",
-        "meta.$": "States.StringToJson($.fetcherResults[1].metadataResult.Payload.body)"
+        "meta.$": "States.StringToJson($.fetcherResults[1].metadataResult.Payload.body)",
+        "scan_date.$": "$.scan_date"
       },
       "Next": "MaybeIngestOHLCV"
     },
@@ -192,12 +214,12 @@
 
     "PartitionSymbols": {
       "Type": "Task",
-      "Comment": "Tiny Lambda: queries RDS for active symbols once, splits into 10 chunks, writes chunk_N.json files to S3. Workers download their file — zero full-universe RDS hits inside Batch.",
+      "Comment": "Tiny Lambda: symbols with raw_ohlcv for scan_date → 10 chunk files on S3. scan_date comes from execution input (ResolveScanDate) or defaults to UTC date of execution start.",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "arn:aws:lambda:ca-west-1:471112909340:function:dev-batch-scan-partitioner",
         "Payload": {
-          "scan_date.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0)",
+          "scan_date.$": "$.scan_date",
           "array_size": 10
         }
       },
@@ -217,7 +239,25 @@
           "ResultPath": "$.error"
         }
       ],
-      "Next": "RunScannerWorkers"
+      "Next": "MaybeRunScanner"
+    },
+
+    "MaybeRunScanner": {
+      "Type": "Choice",
+      "Comment": "Partitioner returns chunks_written=0 when no symbols have OHLCV for scan_date (wrong date vs RDS, or ingest lag). Do not submit Batch in that case.",
+      "Choices": [
+        {
+          "Variable": "$.partitionResult.Payload.chunks_written",
+          "NumericGreaterThan": 0,
+          "Next": "RunScannerWorkers"
+        }
+      ],
+      "Default": "PipelineSkippedScanner"
+    },
+
+    "PipelineSkippedScanner": {
+      "Type": "Succeed",
+      "Comment": "No S3 chunks for this scan_date. Re-run with input {\"scan_date\":\"YYYY-MM-DD\"} matching raw_ohlcv, or wait for OHLCV ingest."
     },
 
     "RunScannerWorkers": {
@@ -225,7 +265,7 @@
       "Comment": "Array Job (10 children). Each container downloads its S3 chunk, queries RDS for only its ~500 symbols, runs strategies, writes raw signals to daily_scan_signals. Step Functions waits for all 10 to finish.",
       "Resource": "arn:aws:states:::batch:submitJob.sync",
       "Parameters": {
-        "JobName.$": "States.Format('scanner-workers-{}', States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0))",
+        "JobName.$": "States.Format('scanner-workers-{}', $.scan_date)",
         "JobQueue": "arn:aws:batch:ca-west-1:471112909340:job-queue/dev-batch-scanner",
         "JobDefinition": "arn:aws:batch:ca-west-1:471112909340:job-definition/dev-batch-scanner-worker",
         "ArrayProperties": {
@@ -239,7 +279,7 @@
             },
             {
               "Name": "SCAN_DATE",
-              "Value.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0)"
+              "Value.$": "$.scan_date"
             }
           ]
         }
@@ -265,10 +305,10 @@
 
     "RunScannerAggregator": {
       "Type": "Task",
-      "Comment": "Single container: reads every signal from daily_scan_signals for today, ranks globally across the full universe, writes final top picks to stock_picks, then cleans up the staging table.",
+      "Comment": "Single container: reads every signal from daily_scan_signals for scan_date, ranks globally across the full universe, writes final top picks to stock_picks, then cleans up the staging table.",
       "Resource": "arn:aws:states:::batch:submitJob.sync",
       "Parameters": {
-        "JobName.$": "States.Format('scanner-aggregator-{}', States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0))",
+        "JobName.$": "States.Format('scanner-aggregator-{}', $.scan_date)",
         "JobQueue": "arn:aws:batch:ca-west-1:471112909340:job-queue/dev-batch-scanner",
         "JobDefinition": "arn:aws:batch:ca-west-1:471112909340:job-definition/dev-batch-scanner-aggregator",
         "ContainerOverrides": {
@@ -279,7 +319,7 @@
             },
             {
               "Name": "SCAN_DATE",
-              "Value.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'T'), 0)"
+              "Value.$": "$.scan_date"
             }
           ]
         }

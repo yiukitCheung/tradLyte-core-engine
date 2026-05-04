@@ -113,6 +113,18 @@ aws stepfunctions start-execution \
   --region ca-west-1
 ```
 
+**Trading session date (`scan_date`):** The partitioner only includes symbols that already have `raw_ohlcv` for the chosen day. By default, `scan_date` is the **UTC calendar date** of the execution start. If you start a run after midnight UTC (e.g. 04:01 UTC on Wed) but your latest bars are still for **Tue** in the US session, pass the OHLCV date explicitly so the scanner matches RDS:
+
+```bash
+aws stepfunctions start-execution \
+  --state-machine-arn "arn:aws:states:ca-west-1:471112909340:stateMachine:condvest-daily-ohlcv-pipeline" \
+  --name "manual-scan-$(date +%Y%m%d%H%M%S)" \
+  --region ca-west-1 \
+  --input '{"scan_date":"2026-04-28"}'
+```
+
+If the partitioner finds no symbols for that date (`chunks_written: 0`), the state machine **skips** Batch scanner jobs instead of failing ten workers.
+
 ### Check Pipeline Status
 
 ```bash
