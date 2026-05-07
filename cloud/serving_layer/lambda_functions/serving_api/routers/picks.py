@@ -251,27 +251,45 @@ def get_pick_detail(
 def get_pick_returns(
     scan_date: date,
     horizons: str = Query(default="1,5,21"),
+    industry: Optional[str] = Query(default=None, description="Exact match on symbol_metadata.industry"),
+    min_market_cap: Optional[int] = Query(default=None, ge=0, description="Minimum marketcap (symbol_metadata)"),
+    max_market_cap: Optional[int] = Query(default=None, ge=0, description="Maximum marketcap (symbol_metadata)"),
 ) -> Dict[str, Any]:
+    filt = _picks_today_meta_filters(industry, min_market_cap, max_market_cap)
     selected_horizons = _parse_horizons(horizons)
     cache_key = make_cache_key(
         "pick_returns",
-        {"scan_date": scan_date.isoformat(), "horizons": ",".join(map(str, selected_horizons))},
+        {
+            "scan_date": scan_date.isoformat(),
+            "horizons": ",".join(map(str, selected_horizons)),
+            **filt,
+        },
     )
     cached = RETURNS_CACHE.get(cache_key)
     if cached is not None:
         cached["meta"]["cache_hit"] = True
         return cached
 
+    params: Dict[str, Any] = {
+        "scan_date": scan_date.isoformat(),
+        "industry": filt["industry"],
+        "min_mc": filt["min_mc"],
+        "max_mc": filt["max_mc"],
+    }
     query = """
         WITH picks AS (
-            SELECT symbol,
-                   rank,
-                   strategy_name,
-                   signal,
-                   price AS pick_price,
-                   scan_date
-            FROM stock_picks
-            WHERE scan_date = %(scan_date)s::date
+            SELECT sp.symbol,
+                   sp.rank,
+                   sp.strategy_name,
+                   sp.signal,
+                   sp.price AS pick_price,
+                   sp.scan_date
+            FROM stock_picks sp
+            LEFT JOIN symbol_metadata m ON m.symbol = sp.symbol
+            WHERE sp.scan_date = %(scan_date)s::date
+              AND (%(industry)s::text IS NULL OR m.industry = %(industry)s)
+              AND (%(min_mc)s::bigint IS NULL OR m.marketcap >= %(min_mc)s)
+              AND (%(max_mc)s::bigint IS NULL OR m.marketcap <= %(max_mc)s)
         )
         SELECT p.*,
                (
@@ -312,7 +330,7 @@ def get_pick_returns(
         FROM picks p
         ORDER BY p.rank;
     """
-    rows = execute_query(query, params={"scan_date": scan_date.isoformat()})
+    rows = execute_query(query, params=params)
 
     data = []
     for row in rows:
@@ -345,6 +363,11 @@ def get_pick_returns(
             "count": len(data),
             "scan_date": scan_date.isoformat(),
             "horizons": selected_horizons,
+            "filters": {
+                "industry": filt["industry"],
+                "min_market_cap": filt["min_mc"],
+                "max_market_cap": filt["max_mc"],
+            },
             "cache_hit": False,
         },
     }

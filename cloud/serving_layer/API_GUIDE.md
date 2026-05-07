@@ -41,17 +41,21 @@ aws apigatewayv2 get-apis --region ca-west-1 \
 
 ## Authentication
 
-- If the Lambda has **`SERVING_API_KEY`** set, every **protected** route requires header:
+- If the Lambda has **`SERVING_API_KEY`** or **`SERVING_API_KEY_SECRET_ARN`** set, every **protected** route requires header:
 
   ```http
   x-api-key: <your-key>
   ```
 
-- If `SERVING_API_KEY` is **not** set, the app does not enforce a key (use only in dev).
+- Secret mode (recommended): set `SERVING_API_KEY_SECRET_ARN` to an AWS Secrets Manager secret containing `SERVING_API_KEY` (or `api_key` / `x_api_key`).
+- Env fallback mode: set `SERVING_API_KEY` directly.
+- If neither is set, the app does not enforce a key (use only in dev).
 
 - **`GET /health`** is **not** behind the API-key dependency in code; it is intended for load balancers and quick checks. Still register a route in API Gateway if you use `deploy_http_api.sh` (it includes `GET /health`).
 
 API Gateway does **not** validate `x-api-key` natively for HTTP APIs; validation happens inside Lambda.
+
+For browser apps, any key sent from frontend JavaScript is visible to end users. For production, prefer user auth (JWT/Cognito/Lambda authorizer) or route API calls through your own backend/BFF instead of shipping a static shared key in public client code.
 
 ---
 
@@ -221,6 +225,9 @@ Picks are joined to `symbol_metadata` on `symbol`. Omitting filters returns the 
 | Param | Type | Default | Notes |
 |-------|------|---------|--------|
 | `horizons` | string | `1,5,21` | Comma-separated trading days `1–252` |
+| `industry` | string | — | Exact match on `symbol_metadata.industry` |
+| `min_market_cap` | int | — | `>= 0`; filter `symbol_metadata.marketcap` |
+| `max_market_cap` | int | — | `>= 0`; filter `symbol_metadata.marketcap` |
 
 `{scan_date}` is a path segment, e.g. `2026-04-28`.
 
@@ -229,8 +236,20 @@ Picks are joined to `symbol_metadata` on `symbol`. Omitting filters returns the 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/market/quote/{symbol}` | Latest daily bar + metadata |
+| GET | `/market/news/{symbol}` | Latest Polygon news for a symbol (live API call) |
 | GET | `/market/ohlcv/{symbol}` | OHLCV history |
 | GET | `/market/returns/{symbol}` | Simple multi-horizon returns from daily closes |
+
+**`/market/news/{symbol}`**
+
+| Param | Type | Default | Notes |
+|-------|------|---------|--------|
+| `limit` | int | `10` | `1–50` |
+| `order` | string | `desc` | `asc` or `desc` by `published_utc` |
+| `published_utc_gte` | date | — | Lower bound filter |
+| `published_utc_lte` | date | — | Upper bound filter |
+
+Uses Polygon endpoint `v2/reference/news` with ticker filter and reads API key from AWS Secrets Manager via `POLYGON_API_KEY_SECRET_ARN`. The response includes `data` (articles) and `meta` (count/query params/`next_url` with `apiKey` stripped).
 
 **`/market/ohlcv/{symbol}`**
 
@@ -265,6 +284,9 @@ curl -sS -H "x-api-key: $KEY" \
 
 curl -sS -H "x-api-key: $KEY" \
   "$BASE/market/ohlcv/MSFT?interval=1d&limit=50"
+
+curl -sS -H "x-api-key: $KEY" \
+  "$BASE/market/news/AAPL?limit=5&order=desc"
 
 curl -sS -X POST -H "x-api-key: $KEY" -H "Content-Type: application/json" \
   "$BASE/backtest" \
