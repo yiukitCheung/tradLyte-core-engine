@@ -6,6 +6,8 @@
 #   SOURCE_VPC_LAMBDA=dev-batch-daily-ohlcv-ingest-handler \
 #   RDS_SECRET_ARN=arn:aws:secretsmanager:...:secret:... \
 #   SERVING_API_KEY=change-me \
+#   SERVING_API_KEY_SECRET_ARN=arn:aws:secretsmanager:...:secret:... \
+#   POLYGON_API_KEY_SECRET_ARN=arn:aws:secretsmanager:...:secret:... \
 #   ./cloud/serving_layer/infrastructure/serving_api/deploy_lambda.sh
 
 set -euo pipefail
@@ -31,6 +33,8 @@ LAMBDA_ROLE_ARN="${LAMBDA_ROLE_ARN:-}"
 
 RDS_SECRET_ARN="${RDS_SECRET_ARN:-}"
 SERVING_API_KEY="${SERVING_API_KEY:-}"
+SERVING_API_KEY_SECRET_ARN="${SERVING_API_KEY_SECRET_ARN:-}"
+POLYGON_API_KEY_SECRET_ARN="${POLYGON_API_KEY_SECRET_ARN:-}"
 ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-*}"
 SCREENER_CACHE_TTL_S="${SCREENER_CACHE_TTL_S:-60}"
 RETURNS_CACHE_TTL_S="${RETURNS_CACHE_TTL_S:-300}"
@@ -193,6 +197,8 @@ if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$AWS_REGIO
   }
   [[ -z "$RDS_SECRET_ARN" ]] && RDS_SECRET_ARN="$(current_var RDS_SECRET_ARN)"
   [[ -z "$SERVING_API_KEY" ]] && SERVING_API_KEY="$(current_var SERVING_API_KEY)"
+  [[ -z "$SERVING_API_KEY_SECRET_ARN" ]] && SERVING_API_KEY_SECRET_ARN="$(current_var SERVING_API_KEY_SECRET_ARN)"
+  [[ -z "$POLYGON_API_KEY_SECRET_ARN" ]] && POLYGON_API_KEY_SECRET_ARN="$(current_var POLYGON_API_KEY_SECRET_ARN)"
   [[ -z "${ALLOWED_ORIGIN:-}" || "$ALLOWED_ORIGIN" == "*" ]] && ALLOWED_ORIGIN="$(current_var ALLOWED_ORIGIN)"
   [[ -z "$SCREENER_CACHE_TTL_S" ]] && SCREENER_CACHE_TTL_S="$(current_var SCREENER_CACHE_TTL_S)"
   [[ -z "$RETURNS_CACHE_TTL_S" ]] && RETURNS_CACHE_TTL_S="$(current_var RETURNS_CACHE_TTL_S)"
@@ -219,7 +225,7 @@ aws lambda update-function-configuration \
   --timeout "$LAMBDA_TIMEOUT" \
   --memory-size "$LAMBDA_MEMORY" \
   --vpc-config "SubnetIds=${SUBNET_IDS_CSV},SecurityGroupIds=${SECURITY_GROUP_IDS_CSV}" \
-  --environment "Variables={RDS_SECRET_ARN=${RDS_SECRET_ARN},SERVING_API_KEY=${SERVING_API_KEY},ALLOWED_ORIGIN=${ALLOWED_ORIGIN},SCREENER_CACHE_TTL_S=${SCREENER_CACHE_TTL_S},RETURNS_CACHE_TTL_S=${RETURNS_CACHE_TTL_S},BACKTEST_FUNCTION_NAME=${BACKTEST_FUNCTION_NAME}}" \
+  --environment "Variables={RDS_SECRET_ARN=${RDS_SECRET_ARN},SERVING_API_KEY=${SERVING_API_KEY},SERVING_API_KEY_SECRET_ARN=${SERVING_API_KEY_SECRET_ARN},POLYGON_API_KEY_SECRET_ARN=${POLYGON_API_KEY_SECRET_ARN},ALLOWED_ORIGIN=${ALLOWED_ORIGIN},SCREENER_CACHE_TTL_S=${SCREENER_CACHE_TTL_S},RETURNS_CACHE_TTL_S=${RETURNS_CACHE_TTL_S},BACKTEST_FUNCTION_NAME=${BACKTEST_FUNCTION_NAME}}" \
   --region "$AWS_REGION" >/dev/null
 wait_for_lambda_update_ready
 

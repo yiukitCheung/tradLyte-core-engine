@@ -81,6 +81,7 @@ declare -a ROUTES=(
   "GET /picks/detail"
   "GET /picks/{scan_date}/returns"
   "GET /market/quote/{symbol}"
+  "GET /market/news/{symbol}"
   "GET /market/ohlcv/{symbol}"
   "GET /market/returns/{symbol}"
 )
