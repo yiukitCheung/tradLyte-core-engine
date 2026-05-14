@@ -1,7 +1,7 @@
 # TradLyte Data Platform — Architecture & Engineering Reference
 
 > **Document owner:** TradLyte Platform Team
-> **Status:** Living document — reflects post-decoupling state (Q1 2026)
+> **Status:** Living document — reflects post-decoupling state (Q2 2026)
 > **Scope:** Backend data platform (`cloud/`) + local dev stack (`local/`)
 > **Audience:** Backend / Data / Cloud engineers, SRE, Security reviewers
 > **Classification:** Internal — Proprietary (see `LICENSE`)
@@ -515,7 +515,7 @@ Packaging discipline: the deploy scripts vendor **only the shared subset a funct
 | R-6 | `/v1/picks/{scan_date}/returns` can hit timeout/503 under current query shape on cold paths | Medium | Tune SQL/indexing + caching + Lambda timeout before broad rollout |
 | R-7 | No Terraform / CDK — configuration drift possible | Medium | Consider migrating critical IaC to CDK / Terraform before multi-env |
 | R-8 | Polygon rate limits (tier-dependent) not explicitly encoded in `PolygonClient` | Medium | Add exponential backoff + quota-aware scheduler |
-| R-9 | `cloud/serving_layer/infrastructure/backtester/build_push_backtester.sh` untracked; old script deleted at the infrastructure/docker path | Low | Commit or discard per intent |
+| R-9 | Two copies of `build_push_backtester.sh` exist — one under `cloud/serving_layer/infrastructure/backtester/` and an older identical copy under `cloud/serving_layer/infrastructure/docker/`. Both are tracked. | Low | Pick one path (recommended: `infrastructure/backtester/`) and delete the other before promoting to prod |
 
 ---
 
@@ -534,12 +534,16 @@ Packaging discipline: the deploy scripts vendor **only the shared subset a funct
 
 ## 14. References
 
-- `cloud/README.md` — engineering overview
-- `cloud/batch_layer/infrastructure/orchestration/README.md` — orchestration deep-dive
-- `cloud/batch_layer/infrastructure/common/VPC_LAMBDA_SECRETS_MANAGER.txt` — VPC / Secrets ops runbook
-- `cloud/shared/analytics_core/README.md` — strategy framework docs
-- `docs/data_architecture.mmd` — source-of-truth Mermaid diagram (embedded in §2)
-- Related repo: [TradLyte Frontend](https://github.com/yiukitCheung/TradLyte-frontend.git)
+- [`cloud/README.md`](cloud/README.md) — cloud architecture overview
+- [`cloud/batch_layer/infrastructure/orchestration/README.md`](cloud/batch_layer/infrastructure/orchestration/README.md) — orchestration deep-dive
+- [`cloud/batch_layer/infrastructure/common/VPC_LAMBDA_SECRETS_MANAGER.txt`](cloud/batch_layer/infrastructure/common/VPC_LAMBDA_SECRETS_MANAGER.txt) — VPC / Secrets ops runbook
+- [`cloud/serving_layer/README.md`](cloud/serving_layer/README.md) — serving layer overview + lessons learned
+- [`cloud/serving_layer/API_GUIDE.md`](cloud/serving_layer/API_GUIDE.md) — HTTP API contract
+- [`cloud/serving_layer/infrastructure/serving_api/README.md`](cloud/serving_layer/infrastructure/serving_api/README.md) — serving API deploy runbook
+- [`cloud/batch_layer/database/schemas/migrations/README.md`](cloud/batch_layer/database/schemas/migrations/README.md) — local Postgres → RDS migration tooling
+- [`cloud/batch_layer/archive_scripts/README_ARCHIVED_BATCH_JOBS.md`](cloud/batch_layer/archive_scripts/README_ARCHIVED_BATCH_JOBS.md) — retired consolidator/resampler jobs
+- [`cloud/speed_layer/Archive/infrastructure/SPEED_LAYER_REQUIREMENTS.md`](cloud/speed_layer/Archive/infrastructure/SPEED_LAYER_REQUIREMENTS.md) — archived Kinesis/Flink design
+- [`docs/data_architecture.mmd`](docs/data_architecture.mmd) — source-of-truth Mermaid diagram (embedded in §2)
 
 ---
 
@@ -548,3 +552,4 @@ Packaging discipline: the deploy scripts vendor **only the shared subset a funct
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-03-19 | Initial industrial architecture doc post fetch / ingest / plan decoupling |
+| 1.1 | 2026-05-13 | Documentation cleanse: corrected stale references and dead links across the repo, refreshed serving-layer status, refreshed R-9 (`build_push_backtester.sh` duplicate) |
