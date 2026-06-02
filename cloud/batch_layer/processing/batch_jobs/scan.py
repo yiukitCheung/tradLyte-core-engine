@@ -1,18 +1,20 @@
 """
-Daily Scanner — AWS Batch Job (two-phase Array Job)
+Daily Scanner — AWS Batch Job
 
-Phase 1  scanner_worker  (Array Job, N children)
-  Each child slices the global symbol list by its AWS_BATCH_JOB_ARRAY_INDEX,
-  runs all strategies on that slice, and writes raw signals to
-  daily_scan_signals (staging table).
-
-Phase 2  scanner_aggregator  (Single Job, runs after all workers finish)
+Phase 2  scanner_aggregator  (Single Job) — ACTIVE
   Reads every signal for today from daily_scan_signals, runs global ranking
   across the full universe, writes final ranked picks to stock_picks, then
-  cleans up daily_scan_signals for today.
+  cleans up daily_scan_signals for today. This is the only phase the live
+  Step Functions pipeline still invokes (state: RunScannerAggregator).
 
-Step Functions triggers Phase 1 as an Array Job, waits for all children,
-then triggers Phase 2 as a normal single job.
+Phase 1  scanner_worker  (Array Job) — RETIRED
+  Each child sliced the symbol universe (via an S3 chunk file written by the
+  scan_partitioner Lambda), ran strategies on its slice, and wrote raw signals
+  to daily_scan_signals. This per-symbol worker path was replaced by the
+  vectorized full-universe scanner Lambda (dev-batch-vectorized-scanner), which
+  writes the same staging rows in a single pass. The run_worker code below is
+  kept only so this module's aggregator entry point stays intact; the
+  partitioner + worker scripts now live in batch_layer/archive_scripts/.
 """
 
 import os
@@ -94,7 +96,7 @@ def ensure_daily_scan_signals_table(rds_client: RDSTimescaleClient) -> None:
     """
     rds_client.execute_query(ddl)
     rds_client.execute_query(idx)
-
+    
 
 def _log_signal_summary(signals: List[SignalResult], context: str) -> None:
     """Emit compact signal diagnostics to CloudWatch for fast debugging."""

@@ -1,0 +1,6 @@
+# vectorized_scanner_runner Lambda dependencies
+# boto3 is pre-installed in the Lambda runtime — not listed here.
+# polars          → full-universe vectorized scan (.over(symbol)) + native Parquet read
+# psycopg2-binary → write signals to daily_scan_signals (self-contained; no shared/)
+polars>=0.20.0
+psycopg2-binary>=2.9.9

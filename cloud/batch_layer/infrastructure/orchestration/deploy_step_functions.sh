@@ -88,7 +88,8 @@ LAMBDA_POLICY='{
                 "arn:aws:lambda:'$AWS_REGION':'$AWS_ACCOUNT_ID':function:dev-batch-daily-meta-fetcher",
                 "arn:aws:lambda:'$AWS_REGION':'$AWS_ACCOUNT_ID':function:dev-batch-daily-ohlcv-ingest-handler",
                 "arn:aws:lambda:'$AWS_REGION':'$AWS_ACCOUNT_ID':function:dev-batch-daily-meta-ingest-handler",
-                "arn:aws:lambda:'$AWS_REGION':'$AWS_ACCOUNT_ID':function:dev-batch-scanner-snapshot-builder"
+                "arn:aws:lambda:'$AWS_REGION':'$AWS_ACCOUNT_ID':function:dev-batch-scanner-snapshot-builder",
+                "arn:aws:lambda:'$AWS_REGION':'$AWS_ACCOUNT_ID':function:dev-batch-vectorized-scanner"
             ]
         }
     ]

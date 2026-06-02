@@ -1,5 +1,5 @@
 {
-  "Comment": "Daily pipeline: parallel fetch → wait for RDS hydration → build vectorized-scanner snapshot (additive, non-blocking) → partition symbols → 10 parallel scanner workers → global aggregator → done",
+  "Comment": "Daily pipeline: parallel fetch → wait for RDS hydration → build vectorized-scanner snapshot → vectorized full-universe scanner (single Lambda, writes daily_scan_signals) → global aggregator → done. The snapshot + vectorized scanner replaced the old partitioner + 10-child Batch worker array (parity validated offline).",
   "StartAt": "ResolveScanDate",
   "States": {
 
@@ -214,7 +214,7 @@
 
     "BuildScannerSnapshot": {
       "Type": "Task",
-      "Comment": "Incrementally rewrite the consolidated long-format 1d OHLCV Parquet snapshot (scanner-snapshots/latest/market_1d.parquet) used by the vectorized full-universe scanner. RDS is hydrated by now, so this pulls only scan_date's new bars, dedupes on (symbol,date), trims the retention window, and rewrites. Additive: failure is non-blocking — the run continues to the existing RDS-based Batch scanner so daily picks are never lost while this snapshot path rolls out.",
+      "Comment": "Incrementally rewrite the consolidated long-format 1d OHLCV Parquet snapshot (scanner-snapshots/latest/market_1d.parquet) used by the vectorized full-universe scanner. RDS is hydrated by now, so this pulls only scan_date's new bars, dedupes on (symbol,date), trims the retention window, and rewrites. CRITICAL after cutover: the vectorized scanner only emits BUY signals for symbols that have a bar on scan_date, so a missing/stale snapshot ⇒ zero picks. On failure we alert instead of silently scanning stale data.",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "arn:aws:lambda:ca-west-1:471112909340:function:dev-batch-scanner-snapshot-builder",
@@ -235,28 +235,27 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "PartitionSymbols",
-          "ResultPath": "$.snapshotError"
+          "Next": "NotifyFailure",
+          "ResultPath": "$.error"
         }
       ],
-      "Next": "PartitionSymbols"
+      "Next": "RunVectorizedScanner"
     },
 
-    "PartitionSymbols": {
+    "RunVectorizedScanner": {
       "Type": "Task",
-      "Comment": "Tiny Lambda: symbols with raw_ohlcv for scan_date → 10 chunk files on S3. scan_date comes from execution input (ResolveScanDate) or defaults to UTC date of execution start.",
+      "Comment": "Single Lambda replacing the partitioner + 10-child Batch worker array. Reads the long-format snapshot, runs every strategy across the WHOLE universe with Polars window functions (1d anchor + 3d/5d confirmation, identical scoring/confidence to the per-symbol scanner — parity validated offline), and writes raw signals to daily_scan_signals. Runs in seconds.",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "arn:aws:lambda:ca-west-1:471112909340:function:dev-batch-scan-partitioner",
+        "FunctionName": "arn:aws:lambda:ca-west-1:471112909340:function:dev-batch-vectorized-scanner",
         "Payload": {
-          "scan_date.$": "$.scan_date",
-          "array_size": 10
+          "scan_date.$": "$.scan_date"
         }
       },
-      "ResultPath": "$.partitionResult",
+      "ResultPath": "$.vectorizedResult",
       "Retry": [
         {
-          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.Unknown"],
           "IntervalSeconds": 30,
           "MaxAttempts": 2,
           "BackoffRate": 2
@@ -269,68 +268,30 @@
           "ResultPath": "$.error"
         }
       ],
-      "Next": "MaybeRunScanner"
+      "Next": "CheckSnapshotFreshness"
     },
 
-    "MaybeRunScanner": {
+    "CheckSnapshotFreshness": {
       "Type": "Choice",
-      "Comment": "Partitioner returns chunks_written=0 when no symbols have OHLCV for scan_date (wrong date vs RDS, or ingest lag). Do not submit Batch in that case.",
+      "Comment": "Cutover safety net: if the snapshot lacked a bar for scan_date (stale_snapshot=true), the scan produced no anchor-day signals — surface it as a failure rather than writing an empty pick set.",
       "Choices": [
         {
-          "Variable": "$.partitionResult.Payload.chunks_written",
-          "NumericGreaterThan": 0,
-          "Next": "RunScannerWorkers"
+          "Variable": "$.vectorizedResult.Payload.stale_snapshot",
+          "BooleanEquals": true,
+          "Next": "StaleSnapshotError"
         }
       ],
-      "Default": "PipelineSkippedScanner"
+      "Default": "RunScannerAggregator"
     },
 
-    "PipelineSkippedScanner": {
-      "Type": "Succeed",
-      "Comment": "No S3 chunks for this scan_date. Re-run with input {\"scan_date\":\"YYYY-MM-DD\"} matching raw_ohlcv, or wait for OHLCV ingest."
-    },
-
-    "RunScannerWorkers": {
-      "Type": "Task",
-      "Comment": "Array Job (10 children). Each container downloads its S3 chunk, queries RDS for only its ~500 symbols, runs strategies, writes raw signals to daily_scan_signals. Step Functions waits for all 10 to finish.",
-      "Resource": "arn:aws:states:::batch:submitJob.sync",
+    "StaleSnapshotError": {
+      "Type": "Pass",
+      "Comment": "Snapshot had no bar for scan_date — set a descriptive error for the SNS alert.",
       "Parameters": {
-        "JobName.$": "States.Format('scanner-workers-{}', $.scan_date)",
-        "JobQueue": "arn:aws:batch:ca-west-1:471112909340:job-queue/dev-batch-scanner",
-        "JobDefinition": "arn:aws:batch:ca-west-1:471112909340:job-definition/dev-batch-scanner-worker",
-        "ArrayProperties": {
-          "Size": 10
-        },
-        "ContainerOverrides": {
-          "Environment": [
-            {
-              "Name": "JOB_TYPE",
-              "Value": "scanner_worker"
-            },
-            {
-              "Name": "SCAN_DATE",
-              "Value.$": "$.scan_date"
-            }
-          ]
-        }
+        "error": "Vectorized scanner ran on a stale snapshot (no bar for scan_date). OHLCV ingest likely incomplete; daily_scan_signals would be empty."
       },
-      "ResultPath": "$.scannerWorkersResult",
-      "Retry": [
-        {
-          "ErrorEquals": ["Batch.BatchException", "States.TaskFailed"],
-          "IntervalSeconds": 60,
-          "MaxAttempts": 2,
-          "BackoffRate": 2
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "NotifyFailure",
-          "ResultPath": "$.error"
-        }
-      ],
-      "Next": "RunScannerAggregator"
+      "ResultPath": "$.error",
+      "Next": "NotifyFailure"
     },
 
     "RunScannerAggregator": {

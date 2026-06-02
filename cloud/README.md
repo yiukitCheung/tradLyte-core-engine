@@ -41,11 +41,11 @@ For the full engineering reference, see [`../ARCHITECTURE.md`](../ARCHITECTURE.m
 │   │      OHLCV: parquet → RDS upsert (+ SCD-2 watermark update)           │   │
 │   │      Meta : manifest → symbol_metadata upsert                         │   │
 │   │                                                                       │   │
-│   │   STAGE 3  Partition (VPC Lambda)                                     │   │
-│   │      reads symbol_metadata once → writes 10 chunk_N.json to S3        │   │
+│   │   STAGE 3  Build Scanner Snapshot (VPC Lambda)                        │   │
+│   │      RDS → scanner-snapshots/latest/market_1d.parquet (long format)   │   │
 │   │                                                                       │   │
-│   │   STAGE 4  Scanner Workers  (AWS Batch / Fargate, Array Job × 10)     │   │
-│   │      run strategies → daily_scan_signals (RDS staging)                │   │
+│   │   STAGE 4  Vectorized Scanner (VPC Lambda, single pass)               │   │
+│   │      whole-universe Polars scan → daily_scan_signals (RDS staging)    │   │
 │   │                                                                       │   │
 │   │   STAGE 5  Scanner Aggregator (AWS Batch / Fargate, single job)       │   │
 │   │      global rank → stock_picks; truncate staging                      │   │
@@ -128,14 +128,19 @@ cloud/
 │   │       │   ├── deploy_scanner_batch_jobs.sh
 │   │       │   └── wire_scanner_to_rds_proxy.sh
 │   │       └── lambda_functions/
-│   │           └── deploy_processing_lambda.sh   # Deploys scan_partitioner Lambda
+│   │           ├── deploy_snapshot_lambda.sh            # Deploys snapshot-builder Lambda (Stage 3)
+│   │           └── deploy_vectorized_scanner_lambda.sh  # Deploys vectorized-scanner Lambda (Stage 4)
 │   └── processing/
 │       ├── batch_jobs/
-│       │   ├── scan.py                      # Scanner worker + aggregator entry point
+│       │   ├── scan.py                      # Aggregator entry point (worker phase retired)
 │       │   ├── requirements.scanner.txt     # Lean scanner deps
 │       │   └── requirements.txt             # Full deps
 │       └── lambda_functions/
-│           └── scan_partitioner.py          # Symbols → S3 chunks
+│           ├── snapshot_builder.py          # RDS → long-format market_1d.parquet snapshot
+│           ├── vectorized_scanner_runner.py # Whole-universe Polars scan → daily_scan_signals
+│           ├── requirements.snapshot.txt
+│           └── requirements.vectorized_scanner.txt
+│   # (archived: scan_partitioner.py + deploy_processing_lambda.sh → batch_layer/archive_scripts/)
 │
 ├── serving_layer/                           # API serving (MVP live)
 │   ├── README.md
@@ -207,9 +212,10 @@ cloud/
 | Metadata fetcher Lambda | `dev-batch-daily-meta-fetcher` | Deployed |
 | OHLCV ingest handler (Lambda) | `dev-batch-daily-ohlcv-ingest-handler` | Deployed |
 | Metadata ingest handler (Lambda) | `dev-batch-daily-meta-ingest-handler` | Deployed |
-| Scanner partitioner (Lambda) | `dev-batch-scan-partitioner` | Deployed |
-| Scanner workers (AWS Batch on Fargate, Array × 10) | `dev-batch-scanner-worker` | Deployed |
+| Scanner snapshot builder (Lambda) | `dev-batch-scanner-snapshot-builder` | Deployed |
+| Vectorized scanner (Lambda) | `dev-batch-vectorized-scanner` | Deployed |
 | Scanner aggregator (AWS Batch on Fargate) | `dev-batch-scanner-aggregator` | Deployed |
+| ~~Scanner partitioner / workers~~ | `dev-batch-scan-partitioner`, `dev-batch-scanner-worker` | Retired (replaced by vectorized scanner) |
 | Step Functions state machine | `dev-daily-ohlcv-pipeline` | Deployed |
 | EventBridge schedule | `dev-daily-ohlcv-pipeline-schedule` | Mon–Fri 4:05 PM America/New_York |
 | SNS failure topic | `condvest-pipeline-alerts` | Configured |
@@ -273,11 +279,11 @@ Market Close (4:00 PM America/New_York)
    OHLCV  → RDS upsert + SCD-2 watermark update
    Meta   → symbol_metadata upsert
          │
-         ▼  STAGE 3 — Partition Symbols (VPC Lambda)             ~ 30 sec
-   1 RDS query + 10 chunk_N.json files to S3
+         ▼  STAGE 3 — Build Scanner Snapshot (VPC Lambda)        ~ 20–90 sec
+   RDS new bars → dedupe/trim → scanner-snapshots/latest/market_1d.parquet
          │
-         ▼  STAGE 4 — Scanner Workers (Fargate Array × 10)       ~ 10–20 min
-   Each container: download chunk → load OHLCV → run strategies
+         ▼  STAGE 4 — Vectorized Scanner (VPC Lambda, 1 pass)    ~ 10–30 sec
+   Read snapshot → whole-universe Polars scan (.over symbol)
    → daily_scan_signals (RDS staging)
          │
          ▼  STAGE 5 — Scanner Aggregator (Fargate, single)       ~ 1–2 min
@@ -296,10 +302,10 @@ Market Close (4:00 PM America/New_York)
 | Service | Monthly cost |
 |---|---|
 | **Batch Layer** | |
-| Lambda (planner + fetchers + ingest + partitioner) | $5 |
+| Lambda (planner + fetchers + ingest + snapshot builder + vectorized scanner) | $5 |
 | RDS (t3.micro) | $20 |
 | S3 storage | $10 |
-| AWS Batch (scanner Array Job + aggregator) | $20 |
+| AWS Batch (scanner aggregator) | $5 |
 | ECR (scanner image) | $1 |
 | Step Functions | $2 |
 | SNS alerts | $1 |
