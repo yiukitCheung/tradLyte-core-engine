@@ -1,5 +1,5 @@
 {
-  "Comment": "Daily pipeline: parallel fetch → partition symbols → 10 parallel scanner workers → global aggregator → done",
+  "Comment": "Daily pipeline: parallel fetch → wait for RDS hydration → build vectorized-scanner snapshot (additive, non-blocking) → partition symbols → 10 parallel scanner workers → global aggregator → done",
   "StartAt": "ResolveScanDate",
   "States": {
 
@@ -209,6 +209,36 @@
       "Type": "Wait",
       "Comment": "Planner fan-outs the fetcher async; fetcher writes parquet to S3; S3 -> SQS -> daily-ohlcv-ingest-handler hydrates RDS. Real-volume runs (~5k symbols, 1-21 dates) take 10-15 min end-to-end. We pad to 15 min before scanner workers query RDS so they never see stale data. Tune via SCANNER_RDS_HYDRATION_WAIT_SECONDS during deploy if observed runtimes shift.",
       "Seconds": 900,
+      "Next": "BuildScannerSnapshot"
+    },
+
+    "BuildScannerSnapshot": {
+      "Type": "Task",
+      "Comment": "Incrementally rewrite the consolidated long-format 1d OHLCV Parquet snapshot (scanner-snapshots/latest/market_1d.parquet) used by the vectorized full-universe scanner. RDS is hydrated by now, so this pulls only scan_date's new bars, dedupes on (symbol,date), trims the retention window, and rewrites. Additive: failure is non-blocking — the run continues to the existing RDS-based Batch scanner so daily picks are never lost while this snapshot path rolls out.",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:ca-west-1:471112909340:function:dev-batch-scanner-snapshot-builder",
+        "Payload": {
+          "mode": "incremental",
+          "scan_date.$": "$.scan_date"
+        }
+      },
+      "ResultPath": "$.snapshotResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PartitionSymbols",
+          "ResultPath": "$.snapshotError"
+        }
+      ],
       "Next": "PartitionSymbols"
     },
 
