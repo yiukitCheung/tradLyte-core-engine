@@ -1,9 +1,9 @@
 # Serving API Infrastructure
 
-Scripts to deploy the MVP serving API stack:
+Scripts to deploy the serving API stack:
 
-- `deploy_lambda.sh` - packages and deploys `dev-serving-api` (FastAPI + Mangum) into the same private VPC shape used by batch ingest Lambdas.
-- `deploy_http_api.sh` - creates/updates HTTP API Gateway routes and stage (`v1`) with throttling + CORS.
+- `deploy_lambda.sh` — packages and deploys `dev-serving-api` (FastAPI + Mangum) into the private VPC.
+- `deploy_http_api.sh` — creates/updates HTTP API Gateway routes and the `v1` stage (throttling + CORS).
 
 ## 1) Deploy Lambda
 
@@ -11,32 +11,20 @@ Scripts to deploy the MVP serving API stack:
 AWS_REGION=ca-west-1 \
 FUNCTION_NAME=dev-serving-api \
 SOURCE_VPC_LAMBDA=dev-batch-daily-ohlcv-ingest-handler \
-RDS_SECRET_ARN=arn:aws:secretsmanager:...:secret:... \
-SERVING_API_KEY=replace-me \
+RDS_SECRET_ARN=<secret-arn> \
+SERVING_API_KEY=<key> \
 ./cloud/serving_layer/infrastructure/serving_api/deploy_lambda.sh
 ```
 
-## 2) Create RDS Proxy (AWS Console)
+## 2) RDS Proxy (AWS Console)
 
-Create this manually in the AWS Console:
+Create `dev-rds-proxy-v2` (PostgreSQL) in the same VPC/subnets as `dev-serving-api`, authenticate via Secrets Manager using your `RDS_SECRET_ARN`, register the DB in the `default` target group, and point the secret `host` at the proxy endpoint once status is **Available**.
 
-1. Open **RDS > Proxies > Create proxy**.
-2. Name: `dev-rds-proxy-v2`; Engine: **PostgreSQL**.
-3. Attach the same VPC and private subnets used by `dev-serving-api`.
-4. Authentication: **Secrets Manager**, choose your existing `RDS_SECRET_ARN`.
-5. IAM role: select/create the role that allows proxy access to that secret.
-6. Security groups:
-   - Proxy SG allows inbound TCP 5432 from Lambda SG.
-   - RDS SG allows inbound TCP 5432 from Proxy SG.
-7. Create proxy, wait until status is **Available**.
-8. Register your DB instance/cluster in target group `default`.
-9. Copy proxy endpoint and update the secret `host` value to that endpoint.
+Security-group matrix:
 
-Known-good SG matrix:
-
-- Lambda SG -> Proxy SG: outbound TCP 5432.
-- Proxy SG -> Lambda SG: inbound TCP 5432.
-- DB SG -> Proxy SG: inbound TCP 5432 (source = Proxy SG).
+- Lambda SG → Proxy SG: outbound TCP 5432
+- Proxy SG → DB SG: TCP 5432
+- DB SG: inbound TCP 5432 from Proxy SG
 
 ## 3) Deploy HTTP API
 
@@ -49,20 +37,11 @@ ALLOWED_ORIGIN=https://app.tradlyte.com \
 ./cloud/serving_layer/infrastructure/serving_api/deploy_http_api.sh
 ```
 
-## Environment Variables
+## Environment variables (`dev-serving-api`)
 
-Set on `dev-serving-api` Lambda:
-
-- `RDS_SECRET_ARN` - secret with `host`, `port`, `username`, `password`, `database/dbname`.
-- `SERVING_API_KEY` - accepted `x-api-key` value (optional, but recommended).
-- `ALLOWED_ORIGIN` - frontend origin for CORS.
-- `SCREENER_CACHE_TTL_S` - default `60`.
-- `RETURNS_CACHE_TTL_S` - default `300`.
-- `MARKET_CACHE_TTL_S` - default `60`.
-
-## Troubleshooting notes
-
-- If endpoints return 500 with `AccessDeniedException` on `GetSecretValue`, the Lambda role policy does not include the configured `RDS_SECRET_ARN`.
-- If health works but data routes timeout/503, verify proxy target health first:
-  `aws rds describe-db-proxy-targets --db-proxy-name dev-rds-proxy-v2 --target-group-name default --region ca-west-1`
-- For HTTP API stage `v1`, keep app base path handling aligned (`API_GATEWAY_BASE_PATH=/v1`) to avoid route-level 404.
+| Var | Purpose |
+|---|---|
+| `RDS_SECRET_ARN` | Secret with `host`, `port`, `username`, `password`, `database`/`dbname` |
+| `SERVING_API_KEY` | Accepted `x-api-key` value (optional but recommended) |
+| `ALLOWED_ORIGIN` | Frontend origin for CORS |
+| `SCREENER_CACHE_TTL_S` / `RETURNS_CACHE_TTL_S` / `MARKET_CACHE_TTL_S` | Cache TTLs (defaults `60` / `300` / `60`) |
