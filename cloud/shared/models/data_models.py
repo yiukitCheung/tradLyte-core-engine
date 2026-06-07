@@ -3,60 +3,50 @@ Data models for the AWS Lambda Architecture implementation.
 These models define the structure of data flowing through the pipeline.
 """
 
-from datetime import datetime
-from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Annotated, Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, PlainSerializer
+
+DecimalField = Annotated[Decimal, PlainSerializer(lambda v: str(v), return_type=str)]
+IsoDateTime = Annotated[datetime, PlainSerializer(lambda v: v.isoformat(), return_type=str)]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class TickData(BaseModel):
     """Raw tick data from Polygon.io WebSocket"""
     symbol: str
-    price: Decimal = Field(..., description="Current price")
+    price: DecimalField = Field(..., description="Current price")
     volume: int = Field(..., description="Volume for this tick")
-    timestamp: datetime = Field(..., description="Timestamp of the tick")
+    timestamp: IsoDateTime = Field(..., description="Timestamp of the tick")
     exchange: Optional[str] = None
     conditions: Optional[List[int]] = None
-    
-    class Config:
-        json_encoders = {
-            Decimal: str,
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class OHLCVData(BaseModel):
     """OHLCV candlestick data"""
     symbol: str
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
+    open: DecimalField
+    high: DecimalField
+    low: DecimalField
+    close: DecimalField
     volume: int
-    timestamp: datetime
+    timestamp: IsoDateTime
     interval: str = Field(..., description="Interval (e.g., '1m', '5m', '1h', '1d')")
-    
-    class Config:
-        json_encoders = {
-            Decimal: str,
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class TechnicalIndicator(BaseModel):
     """Technical indicator value"""
     symbol: str
     indicator_type: str = Field(..., description="e.g., 'ema', 'rsi', 'macd'")
-    value: Decimal
-    timestamp: datetime
+    value: DecimalField
+    timestamp: IsoDateTime
     interval: str
     parameters: Dict[str, Any] = Field(default_factory=dict)
-    
-    class Config:
-        json_encoders = {
-            Decimal: str,
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class TradingSignal(BaseModel):
@@ -66,15 +56,9 @@ class TradingSignal(BaseModel):
     signal_type: str = Field(..., description="'BUY', 'SELL', 'HOLD'")
     strategy: str = Field(..., description="Strategy that generated the signal")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence level 0-1")
-    price: Decimal = Field(..., description="Price when signal was generated")
-    timestamp: datetime
+    price: DecimalField = Field(..., description="Price when signal was generated")
+    timestamp: IsoDateTime
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    
-    class Config:
-        json_encoders = {
-            Decimal: str,
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class MarketAlert(BaseModel):
@@ -84,13 +68,8 @@ class MarketAlert(BaseModel):
     alert_type: str = Field(..., description="'PRICE_BREAKOUT', 'VOLUME_SPIKE', etc.")
     message: str
     severity: str = Field(..., description="'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'")
-    timestamp: datetime
+    timestamp: IsoDateTime
     conditions: Dict[str, Any] = Field(default_factory=dict)
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class BatchProcessingJob(BaseModel):
@@ -98,16 +77,11 @@ class BatchProcessingJob(BaseModel):
     job_id: str
     job_type: str = Field(..., description="'DAILY_OHLCV', 'RESAMPLING', 'INDICATORS'")
     status: str = Field(..., description="'PENDING', 'RUNNING', 'COMPLETED', 'FAILED'")
-    start_time: datetime
-    end_time: Optional[datetime] = None
+    start_time: IsoDateTime
+    end_time: Optional[IsoDateTime] = None
     symbols_processed: List[str] = Field(default_factory=list)
     records_processed: int = 0
     error_message: Optional[str] = None
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class StreamProcessingMetrics(BaseModel):
@@ -116,12 +90,7 @@ class StreamProcessingMetrics(BaseModel):
     records_per_second: float
     lag_seconds: float
     error_rate: float
-    timestamp: datetime
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    timestamp: IsoDateTime
 
 
 class APIResponse(BaseModel):
@@ -129,30 +98,19 @@ class APIResponse(BaseModel):
     success: bool
     data: Optional[Any] = None
     error: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: IsoDateTime = Field(default_factory=_utcnow)
     request_id: Optional[str] = None
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class LivePriceResponse(BaseModel):
     """Response for live price API"""
     symbol: str
-    price: Decimal
-    change: Optional[Decimal] = None
+    price: DecimalField
+    change: Optional[DecimalField] = None
     change_percent: Optional[float] = None
     volume: Optional[int] = None
-    timestamp: datetime
+    timestamp: IsoDateTime
     source: str = Field(..., description="'CACHE', 'DATABASE', 'API'")
-    
-    class Config:
-        json_encoders = {
-            Decimal: str,
-            datetime: lambda v: v.isoformat()
-        }
 
 
 class HistoricalDataResponse(BaseModel):
@@ -161,12 +119,7 @@ class HistoricalDataResponse(BaseModel):
     interval: str
     data: List[OHLCVData]
     count: int
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    timestamp: IsoDateTime = Field(default_factory=_utcnow)
 
 
 class SignalResponse(BaseModel):
@@ -174,9 +127,4 @@ class SignalResponse(BaseModel):
     symbol: str
     signals: List[TradingSignal]
     count: int
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    timestamp: IsoDateTime = Field(default_factory=_utcnow)

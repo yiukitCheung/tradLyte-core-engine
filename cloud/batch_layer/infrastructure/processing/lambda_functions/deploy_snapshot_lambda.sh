@@ -127,8 +127,11 @@ $PIP_CMD install \
     --no-cache-dir \
     --quiet
 
-echo "Copying Lambda source..."
+echo "Copying Lambda source + RDS connection helper..."
 cp "$PROCESSING_DIR/lambda_functions/${FILE_NAME}.py" "$PACKAGE_DIR/${FILE_NAME}.py"
+mkdir -p "$PACKAGE_DIR/clients"
+cp "$CLOUD_DIR/shared/clients/rds_connection.py" "$PACKAGE_DIR/clients/rds_connection.py"
+touch "$PACKAGE_DIR/clients/__init__.py"
 
 echo "Removing cache files..."
 find "$PACKAGE_DIR" -name "*.pyc" -delete

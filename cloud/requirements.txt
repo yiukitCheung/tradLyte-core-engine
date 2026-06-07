@@ -1,3 +1,6 @@
+# Broad local dev environment. Per-Lambda deploy pins live next to each component.
+# Dev-only tools (pytest, black, ruff, localstack) are in requirements.dev.txt.
+#
 # AWS Lambda Architecture Dependencies
 
 # Core AWS SDK

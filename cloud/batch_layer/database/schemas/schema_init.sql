@@ -217,10 +217,29 @@ COMMENT ON COLUMN data_ingestion_watermark.is_current IS 'TRUE if current waterm
 -- ============================================================================
 -- SECTION 5: SCANNER LAYER
 -- ============================================================================
--- Ranked top picks produced by the daily scanner run
+-- Staging + final picks. Staging DDL is canonical in
+-- shared/database/sql/daily_scan_signals.sql (keep in sync).
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS daily_scan_signals (
+    scan_date     DATE         NOT NULL,
+    worker_idx    SMALLINT     NOT NULL,
+    symbol        VARCHAR(50)  NOT NULL,
+    strategy_name VARCHAR(255) NOT NULL,
+    signal        VARCHAR(10)  NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
+    price         DECIMAL(12,4) NOT NULL,
+    confidence    DECIMAL(5,4),
+    metadata      JSONB        DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (scan_date, symbol, strategy_name)
+);
+
+COMMENT ON TABLE daily_scan_signals IS 'Scanner staging table; aggregator clears rows after stock_picks are written.';
+
+CREATE INDEX IF NOT EXISTS idx_daily_scan_signals_date
+ON daily_scan_signals(scan_date);
+
+CREATE TABLE IF NOT EXISTS stock_picks (
     scan_date DATE NOT NULL,
     rank INTEGER NOT NULL CHECK (rank > 0),
     symbol VARCHAR(50) NOT NULL,
@@ -235,45 +254,13 @@ CREATE TABLE IF NOT EXISTS daily_scan_signals (
     UNIQUE (scan_date, symbol, strategy_name)
 );
 
-COMMENT ON TABLE stock_picks IS 'Ranked top picks produced by the daily scanner  run';
-COMMENT ON COLUMN stock_picks.scan_date IS 'Market date for this ranked scan output';
-COMMENT ON COLUMN stock_picks.rank IS 'Ranking position (1 = best)';
-COMMENT ON COLUMN stock_picks.symbol IS 'Stock ticker symbol';
-COMMENT ON COLUMN stock_picks.strategy_name IS 'Strategy that generated this pick';
-COMMENT ON COLUMN stock_picks.signal IS 'Signal type from strategy output';
-COMMENT ON COLUMN stock_picks.price IS 'Signal price';
-COMMENT ON COLUMN stock_picks.confidence IS 'Raw model/strategy confidence';
-COMMENT ON COLUMN stock_picks.score IS 'Composite ranking score used for top-pick ordering';
-COMMENT ON COLUMN stock_picks.metadata IS 'Additional ranking and strategy context';
+COMMENT ON TABLE stock_picks IS 'Ranked top picks produced by the daily scanner run';
 
 CREATE INDEX IF NOT EXISTS idx_stock_picks_date_rank
 ON stock_picks(scan_date, rank);
 
 CREATE INDEX IF NOT EXISTS idx_stock_picks_symbol_date
 ON stock_picks(symbol, scan_date);
-
--- ============================================================================
--- Scanner staging table: scanner Lambda writes raw signals; aggregator clears daily.
--- The scanner_aggregator reads the full day's signals, ranks globally, then
--- writes to stock_picks. Rows are deleted after aggregation (self-cleaning).
--- ============================================================================
-CREATE TABLE IF NOT EXISTS stock_picks (
-    scan_date    DATE         NOT NULL,
-    worker_idx   SMALLINT     NOT NULL,
-    symbol       VARCHAR(50)  NOT NULL,
-    strategy_name VARCHAR(255) NOT NULL,
-    signal       VARCHAR(10)  NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
-    price        DECIMAL(12,4) NOT NULL,
-    confidence   DECIMAL(5,4),
-    metadata     JSONB        DEFAULT '{}',
-    created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (scan_date, symbol, strategy_name)
-);
-
-COMMENT ON TABLE daily_scan_signals IS 'Intra-day staging table for scanner array-job workers. Cleaned up by aggregator after stock_picks are written.';
-
-CREATE INDEX IF NOT EXISTS idx_daily_scan_signals_date
-ON daily_scan_signals(scan_date);
 
 -- ============================================================================
 -- SECTION 6: PERFORMANCE INDEXES

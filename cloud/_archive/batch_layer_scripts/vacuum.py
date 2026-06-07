@@ -17,10 +17,10 @@ This script cleans up old date=*.parquet files in the bronze layer:
 
 Usage:
     # Parallel mode (default, 5-8x faster!)
-    python vaccume.py [--dry-run] [--retention-days 30] [--max-workers 10]
+    python vacuum.py [--dry-run] [--retention-days 30] [--max-workers 10]
     
     # Sequential mode (for debugging)
-    python vaccume.py --sequential [--dry-run]
+    python vacuum.py --sequential [--dry-run]
 
 Arguments:
     --dry-run           Show what would be deleted without actually deleting

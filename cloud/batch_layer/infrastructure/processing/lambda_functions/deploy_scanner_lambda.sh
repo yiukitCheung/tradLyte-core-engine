@@ -89,16 +89,19 @@ $PIP_CMD install -r "$REQUIREMENTS" -t "$PACKAGE_DIR" \
     --python-version 3.11 --implementation cp --no-cache-dir --quiet 2>/dev/null \
 || $PIP_CMD install -r "$REQUIREMENTS" -t "$PACKAGE_DIR" --no-cache-dir --quiet
 
-echo "Copying Lambda source + bundled analytics_core package..."
+echo "Copying Lambda source + bundled shared packages..."
 cp "$PROCESSING_DIR/lambda_functions/${FILE_NAME}.py" "$PACKAGE_DIR/${FILE_NAME}.py"
-# Bundle the whole analytics_core package so the runner imports the shared,
-# partition-aware strategy library (single source of truth for signal logic).
-# Strip dev-only / runtime-irrelevant subtrees to keep the package lean.
 rm -rf "$PACKAGE_DIR/analytics_core"
 cp -r "$SHARED_DIR/analytics_core" "$PACKAGE_DIR/analytics_core"
 rm -rf "$PACKAGE_DIR/analytics_core/_spikes" \
        "$PACKAGE_DIR/analytics_core/tests" \
        "$PACKAGE_DIR/analytics_core"/*.egg-info
+mkdir -p "$PACKAGE_DIR/clients" "$PACKAGE_DIR/database/sql"
+cp "$SHARED_DIR/clients/rds_connection.py" "$PACKAGE_DIR/clients/rds_connection.py"
+touch "$PACKAGE_DIR/clients/__init__.py"
+cp "$SHARED_DIR/database/staging.py" "$PACKAGE_DIR/database/staging.py"
+cp "$SHARED_DIR/database/sql/daily_scan_signals.sql" "$PACKAGE_DIR/database/sql/daily_scan_signals.sql"
+touch "$PACKAGE_DIR/database/__init__.py"
 
 echo "Removing cache files..."
 find "$PACKAGE_DIR" -name "*.pyc" -delete

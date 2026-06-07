@@ -35,8 +35,12 @@ import psycopg2
 # can also be named scanner.py without shadowing the library module.
 try:
     from analytics_core import scanner as ac_scanner
+    from clients.rds_connection import get_rds_connection_string
+    from database.staging import ensure_daily_scan_signals
 except ImportError:  # pragma: no cover - local dev
     from shared.analytics_core import scanner as ac_scanner  # type: ignore
+    from shared.clients.rds_connection import get_rds_connection_string  # type: ignore
+    from shared.database.staging import ensure_daily_scan_signals  # type: ignore
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -48,39 +52,7 @@ LATEST_KEY = f"{SNAPSHOT_PREFIX}/latest/{SNAPSHOT_FILENAME}"
 SCAN_WINDOW_DAYS = int(os.environ.get("SCAN_WINDOW_DAYS", "1095"))  # 3 years
 
 LOCAL_SNAPSHOT = "/tmp/scanner_snapshot.parquet"
-
-# DDL kept byte-identical to batch_jobs/aggregator.py so the table contract matches.
-_DDL = """
-CREATE TABLE IF NOT EXISTS daily_scan_signals (
-    scan_date     DATE         NOT NULL,
-    worker_idx    SMALLINT     NOT NULL,
-    symbol        VARCHAR(50)  NOT NULL,
-    strategy_name VARCHAR(255) NOT NULL,
-    signal        VARCHAR(10)  NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
-    price         DECIMAL(12,4) NOT NULL,
-    confidence    DECIMAL(5,4),
-    metadata      JSONB        DEFAULT '{}'::jsonb,
-    created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (scan_date, symbol, strategy_name)
-);
-"""
-_DDL_IDX = "CREATE INDEX IF NOT EXISTS idx_daily_scan_signals_date ON daily_scan_signals(scan_date);"
-
 WORKER_IDX = 0
-
-
-def get_rds_connection_string() -> str:
-    secret_arn = os.environ.get("RDS_SECRET_ARN")
-    if not secret_arn:
-        raise ValueError("RDS_SECRET_ARN environment variable not set")
-    client = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION", "ca-west-1"))
-    secret = json.loads(client.get_secret_value(SecretId=secret_arn)["SecretString"])
-    host = secret["host"]
-    port = secret.get("port", 5432)
-    db = secret.get("database", secret.get("dbname", "postgres"))
-    user = secret["username"]
-    pwd = secret["password"]
-    return f"postgresql://{user}:{pwd}@{host}:{port}/{db}?sslmode=require"
 
 
 def _resolve_scan_date(event: Dict[str, Any], snapshot_max):
@@ -151,8 +123,7 @@ def lambda_handler(event: Dict[str, Any], context) -> Dict[str, Any]:
     conn = psycopg2.connect(get_rds_connection_string())
     try:
         with conn.cursor() as cur:
-            cur.execute(_DDL)
-            cur.execute(_DDL_IDX)
+            ensure_daily_scan_signals(cur)
         conn.commit()
 
         if all_rows:

@@ -19,12 +19,11 @@ from collections import Counter, defaultdict
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Union
 
-import boto3
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../..'))
 
 from shared.analytics_core.models import SignalResult
 from shared.clients.rds_timescale_client import RDSTimescaleClient
+from shared.database.staging import daily_scan_signals_ddl
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,50 +36,9 @@ logger = logging.getLogger(__name__)
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def get_rds_connection_string() -> str:
-    """Resolve the RDS DSN from Secrets Manager."""
-    secret_arn = os.environ.get('RDS_SECRET_ARN')
-    if not secret_arn:
-        raise ValueError("RDS_SECRET_ARN environment variable not set")
-
-    client = boto3.client('secretsmanager', region_name=os.environ.get('AWS_REGION', 'ca-west-1'))
-    secret = json.loads(client.get_secret_value(SecretId=secret_arn)['SecretString'])
-
-    host = secret['host']
-    port = secret.get('port', 5432)
-    db = secret.get('database', secret.get('dbname', 'postgres'))
-    user = secret['username']
-    pwd = secret['password']
-    return f"postgresql://{user}:{pwd}@{host}:{port}/{db}?sslmode=require"
-
-
 def ensure_daily_scan_signals_table(rds_client: RDSTimescaleClient) -> None:
-    """
-    Ensure scanner staging table exists.
-
-    The scanner Lambda writes raw signals here; the aggregator reads and then
-    clears same-day rows after final top picks are written.
-    """
-    ddl = """
-    CREATE TABLE IF NOT EXISTS daily_scan_signals (
-        scan_date     DATE         NOT NULL,
-        worker_idx    SMALLINT     NOT NULL,
-        symbol        VARCHAR(50)  NOT NULL,
-        strategy_name VARCHAR(255) NOT NULL,
-        signal        VARCHAR(10)  NOT NULL CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
-        price         DECIMAL(12,4) NOT NULL,
-        confidence    DECIMAL(5,4),
-        metadata      JSONB        DEFAULT '{}'::jsonb,
-        created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (scan_date, symbol, strategy_name)
-    );
-    """
-    idx = """
-    CREATE INDEX IF NOT EXISTS idx_daily_scan_signals_date
-    ON daily_scan_signals(scan_date);
-    """
-    rds_client.execute_query(ddl)
-    rds_client.execute_query(idx)
+    """Ensure scanner staging table exists (canonical DDL in shared/database/sql/)."""
+    rds_client.execute_query(daily_scan_signals_ddl())
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +182,7 @@ def run_aggregator(
     logger.info(f"SCANNER AGGREGATOR  date={scan_date}")
     logger.info("=" * 70)
 
-    rds_conn_str = get_rds_connection_string()  # noqa: F841 (validates secret early)
-    rds_client   = RDSTimescaleClient(secret_arn=os.environ.get('RDS_SECRET_ARN'))
+    rds_client = RDSTimescaleClient(secret_arn=os.environ.get('RDS_SECRET_ARN'))
     ensure_daily_scan_signals_table(rds_client)
 
     # ----- read raw signals -----
@@ -327,17 +284,19 @@ def run_aggregator(
     # ----- clean up staging rows for today -----
     try:
         conn = rds_client.connection
-        old_autocommit  = conn.autocommit
-        conn.autocommit = False
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM daily_scan_signals WHERE scan_date = %s",
-                (scan_date.isoformat(),),
-            )
-            deleted = cur.rowcount
-        conn.commit()
-        conn.autocommit = old_autocommit
-        logger.info(f"Cleaned up {deleted} staging rows from daily_scan_signals")
+        old_autocommit = conn.autocommit
+        try:
+            conn.autocommit = False
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM daily_scan_signals WHERE scan_date = %s",
+                    (scan_date.isoformat(),),
+                )
+                deleted = cur.rowcount
+            conn.commit()
+            logger.info(f"Cleaned up {deleted} staging rows from daily_scan_signals")
+        finally:
+            conn.autocommit = old_autocommit
     except Exception as e:
         logger.warning(f"Staging cleanup failed (non-fatal): {e}")
 

@@ -124,21 +124,10 @@ LOCAL_OUT = "/tmp/snapshot_out.parquet"
 # RDS / S3 helpers
 # ---------------------------------------------------------------------------
 
-def get_rds_connection_string() -> str:
-    """Resolve the RDS DSN from Secrets Manager (self-contained, no shared/)."""
-    secret_arn = os.environ.get("RDS_SECRET_ARN")
-    if not secret_arn:
-        raise ValueError("RDS_SECRET_ARN environment variable not set")
-
-    client = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION", "ca-west-1"))
-    secret = json.loads(client.get_secret_value(SecretId=secret_arn)["SecretString"])
-
-    host = secret["host"]
-    port = secret.get("port", 5432)
-    db = secret.get("database", secret.get("dbname", "postgres"))
-    user = secret["username"]
-    pwd = secret["password"]
-    return f"postgresql://{user}:{pwd}@{host}:{port}/{db}?sslmode=require"
+try:
+    from clients.rds_connection import get_rds_connection_string
+except ImportError:  # pragma: no cover - local dev
+    from shared.clients.rds_connection import get_rds_connection_string  # type: ignore
 
 
 def _read_rows_to_frame(conn, query: str, params: tuple, server_side: bool) -> pl.DataFrame:

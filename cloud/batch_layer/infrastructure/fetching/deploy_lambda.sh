@@ -297,9 +297,9 @@ mkdir -p "$SCRIPT_DIR"/package
 # Note: Consolidation moved to AWS Batch (see processing/batch_jobs/)
 # OHLCV fetcher: S3 bronze only (Polygon); planner: VPC/RDS reads missing dates → async-invokes fetcher
 # Meta fetcher: Polygon → S3 manifest (no RDS on fetcher)
-build_and_deploy_lambda "daily-ohlcv-fetcher" "$FETCHING_DIR/requirements-ohlcv.txt" "ohlcv"
+build_and_deploy_lambda "daily-ohlcv-fetcher" "$FETCHING_DIR/requirements.ohlcv.txt" "ohlcv"
 build_and_deploy_lambda "daily-ohlcv-planner" "$BATCH_LAYER_DIR/ingesting/requirements.txt" "meta"
-build_and_deploy_lambda "daily-meta-fetcher" "$FETCHING_DIR/requirements-ohlcv.txt" "ohlcv"
+build_and_deploy_lambda "daily-meta-fetcher" "$FETCHING_DIR/requirements.ohlcv.txt" "ohlcv"
 
 echo ""
 echo "=" "=" "=" "=" "=" "=" "=" "=" "=" "="
@@ -326,4 +326,4 @@ echo "📦 Lambda packages stored in S3: s3://${LAMBDA_DEPLOY_BUCKET:-dev-condve
 echo ""
 echo "📝 OHLCV path: planner (VPC) → fetcher → S3 bronze; ingest handler (VPC) ← S3 trigger → RDS."
 echo "📝 VPC planner: RDS_SECRET_ARN + OHLCV_FETCHER_FUNCTION_NAME; private subnets need NAT or Secrets Manager VPC endpoint (see infrastructure/common/VPC_LAMBDA_SECRETS_MANAGER.txt)."
-echo "   Consolidator/resampler Batch jobs: archive_scripts/README_ARCHIVED_BATCH_JOBS.md"
+echo "   Consolidator/resampler Batch jobs: _archive/batch_layer_scripts/README_ARCHIVED_BATCH_JOBS.md"

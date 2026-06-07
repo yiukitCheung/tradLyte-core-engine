@@ -1,6 +1,6 @@
 # TradLyte Cloud Data Pipeline
 
-AWS-native implementation of the TradLyte platform: a daily **Batch Layer** (ingest + scanner) and a live **Serving Layer** (REST API). The Speed Layer (Kinesis/Flink) is archived under `speed_layer/Archive/`.
+AWS-native implementation of the TradLyte platform: a daily **Batch Layer** (ingest + scanner) and a live **Serving Layer** (REST API). Retired code lives under `_archive/`.
 
 For the orchestration flow and component reference, see [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
@@ -9,7 +9,6 @@ For the orchestration flow and component reference, see [`../ARCHITECTURE.md`](.
 ```
 cloud/
 ├── batch_layer/                             # Daily ingest + scanner pipeline
-│   ├── archive_scripts/                     # Retired jobs (consolidator/resampler, partitioner)
 │   ├── database/                            # Schemas, migrations, DB-bootstrap Lambda
 │   ├── fetching/lambda_functions/           # OHLCV/meta fetchers (no VPC) + planner (VPC)
 │   ├── ingesting/lambda_functions/          # S3 → RDS upsert handlers (VPC)
@@ -27,7 +26,7 @@ cloud/
 │   │   └── backtester/                      # Container Lambda (dev-serving-backtester)
 │   └── infrastructure/                      # Serving API + backtester deploy scripts
 │
-├── speed_layer/Archive/                     # Archived Kinesis/Flink design (not deployed)
+├── _archive/                                # Retired batch + speed-layer code (not deployed)
 │
 ├── shared/                                  # Used by batch + serving
 │   ├── clients/                             # Polygon REST + RDS client
@@ -65,11 +64,12 @@ Live routes: `GET /v1/health`, `/v1/screener/quotes`, `/v1/picks/*`, `/v1/market
 
 ### Speed Layer (archived)
 
-A Kinesis + Flink + DynamoDB real-time design, parked for the MVP. Code and design doc under [`speed_layer/Archive/`](speed_layer/Archive/).
+A Kinesis + Flink + DynamoDB real-time design, parked for the MVP. Code under [`_archive/speed_layer/`](_archive/speed_layer/).
 
 ## Documentation
 
 - [Architecture reference](../ARCHITECTURE.md)
 - [Serving API contract](serving_layer/API_GUIDE.md)
 - [Step Functions operations](batch_layer/infrastructure/orchestration/README.md)
-- [Database migration tooling](batch_layer/database/schemas/migrations/README.md)
+- [Database migration tooling](batch_layer/database/migrations/README_data_migration.md)
+- [Deploy cheatsheets](docs/operations/)

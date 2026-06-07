@@ -1,6 +1,6 @@
 # Speed Layer (archived design)
 
-A real-time path that was designed but **not deployed**. Parked for the MVP; code preserved under `cloud/speed_layer/Archive/`.
+A real-time path that was designed but **not deployed**. Parked for the MVP; code preserved under `cloud/_archive/speed_layer/`.
 
 ## Intended flow
 

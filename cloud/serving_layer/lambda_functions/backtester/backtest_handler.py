@@ -14,6 +14,11 @@ from typing import Dict, Any, List
 from analytics_core.strategies.builder import CompositeStrategy
 from analytics_core.executor import MultiTimeframeExecutor
 from analytics_core.backtester import Backtester
+
+try:
+    from clients.rds_connection import get_rds_connection_string
+except ImportError:  # pragma: no cover - container image layout
+    from shared.clients.rds_connection import get_rds_connection_string  # type: ignore
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -24,29 +29,6 @@ secrets_client = boto3.client('secretsmanager', region_name=os.environ.get('AWS_
 # ----------------------------------------------------------------------------
 # Helper functions
 # ----------------------------------------------------------------------------
-
-# Get RDS connection string from Secrets Manager
-def get_rds_connection_string() -> str:
-    """Get RDS connection string from Secrets Manager"""
-    secret_arn = os.environ.get('RDS_SECRET_ARN')
-    if not secret_arn:
-        raise ValueError("RDS_SECRET_ARN environment variable not set")
-    
-    try:
-        response = secrets_client.get_secret_value(SecretId=secret_arn)
-        secret = json.loads(response['SecretString'])
-        
-        # Build connection string
-        host = secret.get('host')
-        port = secret.get('port', 5432)
-        database = secret.get('database', secret.get('dbname', 'postgres'))
-        username = secret.get('username')
-        password = secret.get('password')
-        
-        return f"postgresql://{username}:{password}@{host}:{port}/{database}"
-    except Exception as e:
-        logger.error(f"Error retrieving RDS credentials: {str(e)}")
-        raise
 
 # Collect unique timeframes from strategy component dicts (JSON payloads).
 def _collect_timeframes_from_components(components: Dict[str, Any], base_tf: str) -> List[str]:

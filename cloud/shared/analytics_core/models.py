@@ -6,7 +6,7 @@ Supports both legacy 3-step format and new expandable step-based format
 """
 
 from typing import Annotated, Literal, Optional, Dict, Any, List, Union
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class SetupConfig(BaseModel):
@@ -34,11 +34,15 @@ class SetupConfig(BaseModel):
     # Volume Trend
     volume_multiplier: Optional[float] = Field(None, gt=0, description="Volume must be X times average")
     
-    @validator('slow_period')
-    def slow_greater_than_fast(cls, v, values):
-        if v and values.get('fast_period') and v <= values['fast_period']:
+    @model_validator(mode='after')
+    def slow_greater_than_fast(self):
+        if (
+            self.slow_period
+            and self.fast_period
+            and self.slow_period <= self.fast_period
+        ):
             raise ValueError('slow_period must be greater than fast_period')
-        return v
+        return self
 
 
 class TriggerConfig(BaseModel):
@@ -359,7 +363,7 @@ class ExpandableStrategyConfig(BaseModel):
     """Expandable strategy configuration (supports N steps, not just 3)"""
     name: str = Field(..., description="Strategy name")
     description: Optional[str] = Field(None, description="Strategy description")
-    steps: List[StepConfig] = Field(..., min_items=1, description="List of strategy steps (expandable)")
+    steps: List[StepConfig] = Field(..., min_length=1, description="List of strategy steps (expandable)")
     base_timeframe: str = Field("1d", description="Base timeframe for the strategy")
     
     # Optional filters
@@ -443,13 +447,13 @@ class PatternNode(BaseModel):
 class AndNode(BaseModel):
     """Logical AND of N child conditions."""
     op: Literal['AND'] = 'AND'
-    conditions: List['ConditionNode'] = Field(..., min_items=1, description="Child conditions (AND-combined)")
+    conditions: List['ConditionNode'] = Field(..., min_length=1, description="Child conditions (AND-combined)")
 
 
 class OrNode(BaseModel):
     """Logical OR of N child conditions."""
     op: Literal['OR'] = 'OR'
-    conditions: List['ConditionNode'] = Field(..., min_items=1, description="Child conditions (OR-combined)")
+    conditions: List['ConditionNode'] = Field(..., min_length=1, description="Child conditions (OR-combined)")
 
 
 class NotNode(BaseModel):

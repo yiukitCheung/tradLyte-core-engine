@@ -13,7 +13,7 @@ from datetime import datetime, date
 from decimal import Decimal
 import os
 
-from ..models.data_models import OHLCVData, BatchProcessingJob
+from ..models.data_models import OHLCVData
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,16 @@ class RDSTimescaleClient:
         logger.info("RDSTimescaleClient: Secrets Manager (%s)", secret_arn)
         return cls(secret_arn=secret_arn)
 
-    def __init__(self, endpoint: str = None, port: str = None, 
-                 username: str = None, password: str = None, 
-                 database: str = None, secret_arn: str = None):
+    def __init__(
+        self,
+        *,
+        endpoint: str = None,
+        port: str = None,
+        username: str = None,
+        password: str = None,
+        database: str = None,
+        secret_arn: str = None,
+    ):
         """
         Initialize RDS TimescaleDB client
         
@@ -235,33 +242,6 @@ class RDSTimescaleClient:
             logger.error(f"Error getting active symbols: {str(e)}")
             raise
     
-    def fetch_symbol_range(self, symbol: str, days: int) -> List[OHLCVData]:
-        """Fetch symbol range from the raw_ohlcv table"""
-        sql = """
-        SELECT Fetch_Symbol_Range(%s, %s)
-        """
-        parameters = (symbol, days)
-        results = self.execute_query(sql, parameters)
-        return [OHLCVData(**row) for row in results]
-
-    def fetch_symbol_period(self, symbol: str, period: str) -> List[OHLCVData]:
-        """Fetch symbol period from the raw_ohlcv table"""
-        sql = """
-        SELECT Fetch_Symbol_Period(%s, %s)
-        """
-        parameters = (symbol, period)
-        results = self.execute_query(sql, parameters)
-        return [OHLCVData(**row) for row in results]
-
-    def fetch_growth(self, symbol: str, days: int) -> List[OHLCVData]:
-        """Fetch growth from the raw_ohlcv table"""
-        sql = """
-        SELECT Growth(%s, %s)
-        """
-        parameters = (symbol, days)
-        results = self.execute_query(sql, parameters)
-        return [OHLCVData(**row) for row in results]
-        
     def insert_ohlcv_data(self, ohlcv_data: List[OHLCVData]) -> int:
         """Insert OHLCV data into the raw_ohlcv table (TimescaleDB optimized)"""
         if not ohlcv_data:
@@ -364,41 +344,6 @@ class RDSTimescaleClient:
             logger.error(f"Error inserting metadata: {str(e)}")
             raise
     
-    def insert_batch_job_metadata(self, batch_job: BatchProcessingJob):
-        """Insert batch job metadata for monitoring"""
-        sql = """
-        INSERT INTO batch_jobs (
-            job_id, job_type, status, start_time, end_time, 
-            symbols_processed, records_processed, error_message
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (job_id) 
-        DO UPDATE SET 
-            status = EXCLUDED.status,
-            end_time = EXCLUDED.end_time,
-            symbols_processed = EXCLUDED.symbols_processed,
-            records_processed = EXCLUDED.records_processed,
-            error_message = EXCLUDED.error_message
-        """
-        
-        parameters = (
-            batch_job.job_id,
-            batch_job.job_type,
-            batch_job.status,
-            batch_job.start_time,
-            batch_job.end_time,
-            json.dumps(batch_job.symbols_processed),
-            batch_job.records_processed,
-            batch_job.error_message or ''
-        )
-        
-        try:
-            self.execute_query(sql, parameters)
-            logger.info(f"Stored batch job metadata: {batch_job.job_id}")
-            
-        except Exception as e:
-            logger.error(f"Error storing batch job metadata: {str(e)}")
-            raise
-    
     def get_latest_data_date(self, symbol: str = None) -> Optional[date]:
         """Get the latest data date for a symbol or all symbols"""
         if symbol:
@@ -475,6 +420,3 @@ class RDSTimescaleClient:
             self.connection.close()
             logger.info("RDS TimescaleDB connection closed")
 
-
-# Backward-compatible alias used by older batch-layer modules.
-RDSPostgresClient = RDSTimescaleClient

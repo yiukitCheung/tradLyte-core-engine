@@ -23,8 +23,8 @@ secrets_client = boto3.client("secretsmanager", region_name=os.environ.get("AWS_
 
 app = FastAPI(title="TradLyte Serving API", version="0.1.0")
 
-allowed_origin = os.environ.get("ALLOWED_ORIGIN", "*")
-allow_origins = [allowed_origin] if allowed_origin != "*" else ["*"]
+allowed_origin = os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")
+allow_origins = [origin.strip() for origin in allowed_origin.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
@@ -84,7 +84,7 @@ async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSON
 def health() -> dict:
     return {
         "status": "ok",
-        "service": "dev-serving-api",
+        "service": os.environ.get("SERVICE_NAME", "serving-api"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
