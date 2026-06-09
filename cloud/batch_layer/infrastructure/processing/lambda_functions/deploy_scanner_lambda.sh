@@ -190,10 +190,14 @@ deploy_to() {
 
 if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$AWS_REGION" &>/dev/null; then
     echo "Updating $FUNCTION_NAME..."; deploy_to "$FUNCTION_NAME"
+    aws lambda wait function-updated --function-name "$FUNCTION_NAME" --region "$AWS_REGION" 2>/dev/null || sleep 5
     aws lambda update-function-configuration \
         --function-name "$FUNCTION_NAME" \
         --handler "$LAMBDA_HANDLER" \
-        --region "$AWS_REGION" --output json | jq '{FunctionName, Handler, LastModified}'
+        --timeout "$LAMBDA_TIMEOUT" \
+        --memory-size "$LAMBDA_MEMORY" \
+        --ephemeral-storage "Size=$LAMBDA_EPHEMERAL" \
+        --region "$AWS_REGION" --output json | jq '{FunctionName, Handler, Timeout, MemorySize, LastModified}'
     echo "Deployed successfully."
 else
     echo "ERROR: Function $FUNCTION_NAME not found. First-time setup? Run: $0 --create"
