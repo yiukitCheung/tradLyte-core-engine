@@ -72,4 +72,5 @@ A Kinesis + Flink + DynamoDB real-time design, parked for the MVP. Code under [`
 - [Serving API contract](serving_layer/API_GUIDE.md)
 - [Step Functions operations](batch_layer/infrastructure/orchestration/README.md)
 - [Database migration tooling](batch_layer/database/migrations/README_data_migration.md)
-- [Deploy cheatsheets](docs/operations/)
+- [Security groups (consolidated)](docs/operations/SECURITY_GROUPS.md)
+- [Minimum AWS stack checklist](docs/operations/AWS_MINIMUM_STACK.md)
