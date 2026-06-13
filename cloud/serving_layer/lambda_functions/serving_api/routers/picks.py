@@ -43,6 +43,7 @@ _PICKS_TODAY_JOIN_WHERE = """
           AND (%(industry)s::text IS NULL OR m.industry = %(industry)s)
           AND (%(min_mc)s::bigint IS NULL OR m.marketcap >= %(min_mc)s)
           AND (%(max_mc)s::bigint IS NULL OR m.marketcap <= %(max_mc)s)
+        ORDER BY m.marketcap DESC
 """
 
 
